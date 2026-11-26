@@ -1,0 +1,13 @@
+[package]
+name = "zbench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+c14zz-zstd = { path = ".." }
+zstd = "0.13"
+
+[features]
+prof = ["c14zz-zstd/prof"]
+unsafe = ["c14zz-zstd/unsafe"]

@@ -1,0 +1,71 @@
+# Tests and lints of both forms of the crate (safe, and with the feature `unsafe`). The job
+# `ci` is the one check a pull request needs to be merged.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.form }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - form: safe
+            features: ""
+          - form: unsafe
+            features: "--features c14zz-zstd/unsafe"
+    steps:
+      - uses: actions/checkout@v5
+      - name: toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked ${{ matrix.features }} -- -D warnings
+      - name: test
+        run: cargo test --workspace --release --locked ${{ matrix.features }}
+
+  # the oldest compiler the crate says it builds with (`rust-version`), the library alone
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: toolchain
+        run: |
+          v=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          rustup toolchain install "$v" --profile minimal && rustup default "$v"
+      - name: build
+        run: cargo build --locked && cargo build --locked --features unsafe
+
+  # what `cargo publish` would upload builds by itself
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: package
+        run: cargo package --locked
+
+  ci:
+    if: always()
+    needs: [test, msrv, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: all jobs passed
+        run: |
+          echo '${{ toJSON(needs) }}'
+          [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "false" ]

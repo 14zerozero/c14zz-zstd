@@ -1,0 +1,5 @@
+/target
+/fuzz/Cargo.lock
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts

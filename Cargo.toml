@@ -1,0 +1,31 @@
+[package]
+name = "c14zz-zstd"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "BSD-3-Clause"
+description = "Zstandard compression and decompression in Rust, after the design of the reference implementation"
+keywords = ["zstd", "zstandard", "compression"]
+categories = ["compression"]
+repository = "https://github.com/14zerozero/c14zz-zstd"
+readme = "README.md"
+
+[features]
+# the ten `unsafe` blocks of the README instead of their safe forms: faster
+unsafe = []
+# counters of the time per stage (see src/prof.rs)
+prof = []
+
+[dev-dependencies]
+zstd = "0.13"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+debug = 1
+
+[profile.test]
+opt-level = 2
+
+[workspace]
+members = [".", "zbench"]

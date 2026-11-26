@@ -1,0 +1,48 @@
+[package]
+name = "c14zz-zstd-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+c14zz-zstd = { path = ".." }
+zstd = "0.13"
+
+[features]
+# c14zz-zstd with its `unsafe` blocks: `cargo +nightly fuzz run decode --features unsafe`
+unsafe = ["c14zz-zstd/unsafe"]
+
+# not part of the workspace above
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "dictionary"
+path = "fuzz_targets/dictionary.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "with_dictionary"
+path = "fuzz_targets/with_dictionary.rs"
+test = false
+doc = false
