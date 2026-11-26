@@ -1,0 +1,54 @@
+# After a push to main (a merged pull request): if the version in Cargo.toml is not on
+# crates.io yet, test it, publish it, and tag it. A release is made by raising the version
+# in a pull request; a merge that leaves the version as it is publishes nothing.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: is this version published?
+        id: version
+        run: |
+          meta=$(cargo metadata --no-deps --format-version 1 --locked)
+          name=$(echo "$meta" | jq -r '.workspace_default_members[0] as $id | .packages[] | select(.id == $id) | .name')
+          version=$(echo "$meta" | jq -r '.workspace_default_members[0] as $id | .packages[] | select(.id == $id) | .version')
+          code=$(curl -s -o /dev/null -w '%{http_code}' -A "release-workflow (${{ github.repository }})" "https://crates.io/api/v1/crates/$name/$version")
+          echo "$name $version: crates.io says $code"
+          case "$code" in
+            200) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "unexpected answer from crates.io"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: test
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          cargo test --workspace --release --locked
+          cargo test --workspace --release --locked --features c14zz-zstd/unsafe
+      - name: publish
+        if: steps.version.outputs.publish == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO }}
+        run: cargo publish --locked
+      - name: tag and release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v${{ steps.version.outputs.version }}" --target "${{ github.sha }}" --title "v${{ steps.version.outputs.version }}" --generate-notes
