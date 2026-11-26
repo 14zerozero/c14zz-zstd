@@ -73,7 +73,7 @@ c14zz_zstd::stream::Decoder::new(&frame[..]).read_to_string(&mut text).unwrap();
 | | |
 |---|---|
 | One call | `compress`, `compress_into`, `decompress`, `decompress_into`, `compress_with_dictionary`, `decompress_with_dictionary`, `compress_bound`, `content_size`. A thread keeps the context of these functions (tables of up to 4 MB) for its next call. |
-| Contexts | `Compressor` (level, checksum, content size, dictionary), `Decompressor` (size limit, dictionary) |
+| Contexts | `Compressor` (level, checksum, content size, dictionary), `Decompressor` (size limit, dictionary); `memory_size` says how many bytes one holds, as it does for the streaming types |
 | Streams | `stream::Encoder` (a `Write`, dictionary), `stream::Decoder` (a `Read`, window limit, dictionary) |
 | Dictionaries | `Dictionary` (of the reference implementation's trainer, or any bytes as content) |
 | Other | `FrameHeader::read`, `xxh64` (the checksum's hash) |
@@ -87,9 +87,9 @@ than 1, with its parameters for the size of the input.
 
 | level | strategy | compared with the C library |
 |---|---|---|
-| negative, 1, 2 | `fast` | the same search; frames of the same size or close to it (mostly within 0.1 %) |
+| negative, 1, 2 | `fast` | the same search; frames of the same size (a few bytes apart on messages of a few hundred bytes) |
 | 3, 4 | `dfast` | the same |
-| 5 to 12 | `greedy`, `lazy`, `lazy2` | the same |
+| 5 to 12 | `greedy`, `lazy`, `lazy2` | the same search; frames within 0.15 % of C's size |
 | 13 to 22 | `btlazy2`, `btopt`, `btultra`, `btultra2` | the same search and the same parse; small inputs have these strategies from level 9 on |
 
 ## What is and is not there
@@ -166,11 +166,11 @@ the Silesia corpus and 9 BSON messages of 100 bytes to 8 MB, on a Zen 5 processo
 
 | level | compression: `unsafe` | safe | safe, `native` | decompression: `unsafe` | safe | safe, `native` |
 |------:|------:|------:|------:|------:|------:|------:|
-|  1 | 1.08 | 1.13 | 1.08 | 1.01 | 1.13 | 1.09 |
-|  3 | 1.02 | 1.04 | 1.05 | 1.00 | 1.14 | 1.09 |
-|  6 | 1.13 | 1.43 | 1.33 | 1.00 | 1.15 | 1.09 |
-|  9 | 1.17 | 1.42 | 1.26 | 0.99 | 1.14 | 1.10 |
-| 12 | 1.40 | 1.51 | 1.18 | 1.00 | 1.14 | 1.10 |
+|  1 | 1.09 | 1.12 | 1.08 | 0.97 | 1.14 | 1.09 |
+|  3 | 1.03 | 1.07 | 1.07 | 0.97 | 1.16 | 1.09 |
+|  6 | 1.12 | 1.42 | 1.34 | 0.97 | 1.16 | 1.10 |
+|  9 | 1.16 | 1.46 | 1.29 | 0.97 | 1.16 | 1.10 |
+| 12 | 1.40 | 1.50 | 1.20 | 0.97 | 1.16 | 1.09 |
 
 At the levels 13 to 22, compression with the feature `unsafe` took 1.06 to 1.08 times C's
 time on the same inputs (median; the safe form is not measured there), for frames within

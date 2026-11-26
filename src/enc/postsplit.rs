@@ -29,6 +29,10 @@ pub(crate) struct Parts {
 }
 
 impl Parts {
+    pub fn heap_size(&self) -> usize {
+        self.store.heap_size() + 4 * (self.lit_at.capacity() + self.ends.capacity())
+    }
+
     pub fn new() -> Self {
         Parts { store: SeqStore::new(), lit_at: Vec::new(), ends: Vec::new() }
     }

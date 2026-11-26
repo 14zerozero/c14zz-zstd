@@ -53,6 +53,11 @@ pub(crate) type Tabs = [[SeqSym; 2 * MAX_TABLE_SIZE]; 3];
 const MASK: usize = 2 * MAX_TABLE_SIZE - 1;
 
 impl BlockDecoder {
+    /// The bytes on the heap that this keeps. (A dictionary's tables are the dictionary's.)
+    pub fn heap_size(&self) -> usize {
+        size_of::<huf::DTable>() + size_of::<Tabs>() + self.lit.capacity()
+    }
+
     pub fn new() -> Self {
         BlockDecoder {
             huf: Box::new(huf::DTable::new()),

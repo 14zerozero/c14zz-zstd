@@ -244,6 +244,10 @@ impl Stats {
 }
 
 impl State {
+    pub fn heap_size(&self) -> usize {
+        size_of::<Counts>() + self.table.capacity() * size_of::<Optimal>() + self.matches.capacity() * size_of::<Match>()
+    }
+
     pub fn new() -> Self {
         let stats = Stats {
             lit: [0; 256],

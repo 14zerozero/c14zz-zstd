@@ -55,21 +55,50 @@ impl DTable {
 
     /// Makes the table of two symbols at a time: an entry has the symbol of its index and,
     /// where the bits behind that symbol's code are a whole code as well, that code's.
+    ///
+    /// The entries of a code are those of any other code of its length, but for the first
+    /// symbol: they are worked out for the first code of a length, and copied for the
+    /// others. (A table has few lengths and many codes; an entry worked out costs several
+    /// times one copied.)
     #[inline(never)]
     fn make_double(&mut self) {
         let t = &self.t;
-        for (i, to) in self.t2.iter_mut().enumerate() {
-            let e1 = t[i] as u32;
-            let l1 = e1 & 0xff;
-            // (the bits behind the first code, with zeros behind them: a code that is whole
-            // in them is found at any index that starts with it)
-            let e2 = t[(i << l1) & (DT_SIZE - 1)] as u32;
-            let l2 = e2 & 0xff;
-            *to = if l1 + l2 <= MAX_BITS {
-                Two { symbols: (e1 >> 8 | (e2 & 0xff00)) as u16, bits: (l1 + l2) as u8, two: true }
-            } else {
-                Two { symbols: (e1 >> 8) as u16, bits: l1 as u8, two: false }
+        // where the entries of the first code of each length are
+        let mut first = [usize::MAX; MAX_BITS as usize + 1];
+        let mut base = 0;
+        while base < DT_SIZE {
+            let e1 = t[base] as u32;
+            let l1 = (e1 & 0xff) as usize;
+            let s1 = (e1 >> 8) as u16;
+            // (a table that was read has codes of 1 to 11 bits, each with all the indexes
+            // that start with it)
+            debug_assert!((1..=MAX_BITS as usize).contains(&l1) && base & ((DT_SIZE >> l1) - 1) == 0);
+            if l1 == 0 || l1 > MAX_BITS as usize {
+                break;
+            }
+            let run = DT_SIZE >> l1;
+            let (done, rest) = self.t2.split_at_mut(base);
+            let Some(to) = rest.get_mut(..run) else {
+                break;
             };
+            if first[l1] == usize::MAX {
+                first[l1] = base;
+                for (j, to) in to.iter_mut().enumerate() {
+                    // (the bits behind the first code, with zeros behind them: a code that
+                    // is whole in them is found at any index that starts with it)
+                    let e2 = t[(j << l1) & (DT_SIZE - 1)] as u32;
+                    let two = l1 as u32 + (e2 & 0xff) <= MAX_BITS;
+                    // (without a branch: which entries have two symbols is as good as random)
+                    let second = core::hint::select_unpredictable(two, e2, 0);
+                    *to = Two { symbols: s1 | (second & 0xff00) as u16, bits: (l1 as u32 + (second & 0xff)) as u8, two };
+                }
+            } else {
+                to.copy_from_slice(&done[first[l1]..first[l1] + run]);
+                for to in to.iter_mut() {
+                    to.symbols = (to.symbols & 0xff00) | s1;
+                }
+            }
+            base += run;
         }
         self.double = true;
     }
@@ -673,6 +702,99 @@ pub(crate) fn histogram(src: &[u8], count: &mut [u32; 256]) -> (usize, u32) {
     (max_symbol, largest)
 }
 
+/// Limits the code lengths `lens` of the symbols `sorted` (`count << 8 | symbol`, by count,
+/// rarest first; the lengths are those of a Huffman tree, so the longest first) to `limit`
+/// bits, the reference implementation's way: the codes that are too long are cut to the
+/// limit, and what that takes more than there is, is paid back by making other codes one bit
+/// longer, each time the one of the length that pays most of the rest and whose symbol is
+/// the rarest of that length, unless two symbols of the next longer length are rarer
+/// together. `false`: no such codes.
+fn limit_lengths(lens: &mut [u8], sorted: &[u64], limit: u32) -> bool {
+    const NONE: usize = usize::MAX;
+    let n = lens.len();
+    let largest = lens[0] as u32;
+    debug_assert!(lens.windows(2).all(|w| w[0] >= w[1]));
+    if largest <= limit {
+        return true;
+    }
+    if largest > 31 || n > 1 << limit {
+        return false;
+    }
+    // what the cut takes too much, in units of the longest code
+    let base = 1i64 << (largest - limit);
+    let mut cost = 0i64;
+    let mut i = 0;
+    while i < n && lens[i] as u32 > limit {
+        cost += base - (1 << (largest - lens[i] as u32));
+        lens[i] = limit as u8;
+        i += 1;
+    }
+    // the rarest symbol with a code shorter than the limit
+    while i < n && lens[i] as u32 == limit {
+        i += 1;
+    }
+    if i == n {
+        return false;
+    }
+    // (now in units of a code at the limit)
+    cost >>= largest - limit;
+
+    // by how much shorter than the limit: the rarest symbol with a code of that length
+    let mut rank_last = [NONE; 34];
+    let mut current = limit;
+    for (j, &l) in lens.iter().enumerate().skip(i) {
+        if (l as u32) < current {
+            current = l as u32;
+            rank_last[(limit - current) as usize] = j;
+        }
+    }
+    let count = |j: usize| sorted[j] >> 8;
+    while cost > 0 {
+        // the length that pays back the next power of two above the rest, or a longer one
+        // that has symbols and is cheaper
+        let mut dec = (highbit(cost as u32) + 1) as usize;
+        while dec > 1 {
+            let (high, low) = (rank_last[dec], rank_last[dec - 1]);
+            if high != NONE && (low == NONE || count(high) <= 2 * count(low)) {
+                break;
+            }
+            dec -= 1;
+        }
+        while dec <= MAX_BITS as usize && rank_last[dec] == NONE {
+            dec += 1;
+        }
+        if dec > MAX_BITS as usize {
+            return false;
+        }
+        let j = rank_last[dec];
+        cost -= 1 << (dec - 1);
+        lens[j] += 1;
+        // (it is the most frequent symbol of its new length, unless it is the only one)
+        if rank_last[dec - 1] == NONE {
+            rank_last[dec - 1] = j;
+        }
+        rank_last[dec] = if j + 1 < n && lens[j + 1] as u32 == limit - dec as u32 { j + 1 } else { NONE };
+    }
+    // paid back too much: the most frequent symbols at the limit get a bit back
+    while cost < 0 {
+        let j = if rank_last[1] == NONE {
+            while i < n && lens[i] as u32 == limit {
+                i += 1;
+            }
+            i
+        } else {
+            rank_last[1]
+        };
+        if j == 0 {
+            return false;
+        }
+        lens[j - 1] -= 1;
+        rank_last[1] = j - 1;
+        cost += 1;
+    }
+    true
+}
+
 impl CTable {
     pub fn new() -> Self {
         CTable { codes: [0; 256], tops: [0; 256], max_symbol: 0, table_log: 0 }
@@ -732,6 +854,7 @@ impl CTable {
 
         // the tree: leaves 0..n by count, inner nodes after them in the order they are made,
         // which is by count too, so that the two smallest are at the heads of two queues
+        // (of two of one weight, the inner node first, as the reference implementation has it)
         let mut weight = [0u64; 512];
         let mut parent = [0u16; 512];
         for (i, &e) in sorted.iter().enumerate() {
@@ -740,7 +863,7 @@ impl CTable {
         let (mut leaf, mut inner) = (0, n);
         for node in n..2 * n - 1 {
             let take = |leaf: &mut usize, inner: &mut usize| {
-                if *leaf < n && (*inner >= node || weight[*leaf] <= weight[*inner]) {
+                if *leaf < n && (*inner >= node || weight[*leaf] < weight[*inner]) {
                     *leaf += 1;
                     *leaf - 1
                 } else {
@@ -761,35 +884,8 @@ impl CTable {
         }
         let lens = &mut depth[..n];
 
-        // limit the lengths: cut at the limit, then pay for it with the cheapest symbols
-        if lens.iter().any(|&l| l as u32 > limit) {
-            let total = 1u32 << limit;
-            let mut kraft = 0u32;
-            for l in lens.iter_mut() {
-                *l = (*l).min(limit as u8);
-                kraft += 1 << (limit - *l as u32);
-            }
-            // the rarest symbol that is not at the limit: those before it are and stay there
-            let mut i = 0;
-            while kraft > total {
-                while i < lens.len() && lens[i] as u32 >= limit {
-                    i += 1;
-                }
-                if i == lens.len() {
-                    return false;
-                }
-                lens[i] += 1;
-                kraft -= 1 << (limit - lens[i] as u32);
-            }
-            while kraft < total {
-                // what is left over goes to the most frequent symbol it fits
-                let gap = total - kraft;
-                let Some(i) = lens.iter().rposition(|&l| l > 1 && (1u32 << (limit - l as u32)) <= gap) else {
-                    return false;
-                };
-                kraft += 1 << (limit - lens[i] as u32);
-                lens[i] -= 1;
-            }
+        if !limit_lengths(lens, sorted, limit) {
+            return false;
         }
 
         // canonical codes: the longest first, within a length in symbol order
@@ -1051,6 +1147,81 @@ fn compress_weights(weights: &[u8], out: &mut [u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The table of two symbols against its definition, entry by entry.
+    #[test]
+    fn double_table() {
+        let mut x = 0x1234_5678_9ABC_DEF1u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let (mut ct, mut t) = (CTable::new(), DTable::new());
+        for round in 0..300 {
+            let mut count = [0u32; 256];
+            let symbols = 2 + (next() % 255) as usize;
+            for c in count[..symbols].iter_mut() {
+                *c = 1 + (next() % (1 << (next() % 14))) as u32;
+            }
+            assert!(ct.build(&count, symbols - 1, (5 + round % 7).max(highbit(symbols as u32 - 1) + 1)));
+            let mut description = [0u8; 300];
+            let n = ct.write_table(&mut description);
+            if n == 0 {
+                continue;
+            }
+            t.read(&description[..n]).unwrap();
+            t.make_double();
+            for i in 0..DT_SIZE {
+                let (e1, got) = (t.t[i] as u32, t.t2[i]);
+                let l1 = e1 & 0xff;
+                let e2 = t.t[(i << l1) & (DT_SIZE - 1)] as u32;
+                let want = if l1 + (e2 & 0xff) <= MAX_BITS { ((e1 >> 8 | (e2 & 0xff00)) as u16, l1 + (e2 & 0xff), true) } else { ((e1 >> 8) as u16, l1, false) };
+                assert_eq!((got.symbols, got.bits as u32, got.two), want, "round {round}, index {i}");
+            }
+        }
+    }
+
+    /// Limited code lengths: complete codes within the limit, and no frequent symbol pays
+    /// for the many rare ones (16 frequent bytes among 230 rare ones, as hexadecimal text
+    /// among binary fields has them).
+    #[test]
+    fn limited_lengths() {
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let mut table = CTable::new();
+        for round in 0..2000 {
+            let mut count = [0u32; 256];
+            let symbols = 2 + (next() % 255) as usize;
+            for c in count[..symbols].iter_mut() {
+                // (counts of very different sizes make deep trees)
+                *c = 1 + (next() % (1 << (next() % 16))) as u32;
+            }
+            if round % 4 == 0 {
+                for c in count[..symbols].iter_mut().take(16) {
+                    *c = 800 + (next() % 200) as u32;
+                }
+            }
+            for limit in highbit(symbols as u32 - 1) + 1..=MAX_BITS {
+                assert!(table.build(&count, symbols - 1, limit), "round {round}, limit {limit}");
+                let kraft: u32 = (0..symbols).map(|s| 1 << (MAX_BITS - table.code_len(s))).sum();
+                assert_eq!(kraft, 1 << MAX_BITS, "round {round}, limit {limit}");
+                assert!((0..symbols).all(|s| (1..=limit).contains(&table.code_len(s))), "round {round}, limit {limit}");
+            }
+        }
+        let mut count = [0u32; 256];
+        for (s, c) in count.iter_mut().enumerate() {
+            *c = if s < 16 { 900 + 5 * s as u32 } else { 1 + s as u32 % 12 };
+        }
+        assert!(table.build(&count, 255, MAX_BITS));
+        assert!((0..16).all(|s| table.code_len(s) <= 7), "{:?}", (0..16).map(|s| table.code_len(s)).collect::<Vec<_>>());
+    }
 
     /// The counts of weights in two words against counts in an array.
     #[test]
