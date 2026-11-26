@@ -334,6 +334,22 @@ impl Compressor {
         self.run(src, &mut out)?;
         Ok(out.at)
     }
+
+    /// The bytes of memory this compressor holds now: itself and its tables and buffers,
+    /// as they are after the frames made so far. They grow with the level and with the
+    /// size of the inputs, up to what the level's window needs, and are kept from frame to
+    /// frame. (Not counted: a dictionary, which may be shared, with the tables kept with
+    /// it; the compressor's copy of its content is counted.)
+    ///
+    /// ```
+    /// let mut compressor = c14zz_zstd::Compressor::new(3);
+    /// let new = compressor.memory_size();
+    /// compressor.compress(&[0u8; 10_000]);
+    /// assert!(compressor.memory_size() > new);
+    /// ```
+    pub fn memory_size(&self) -> usize {
+        size_of::<Self>() + self.enc.heap_size()
+    }
 }
 
 /// Decompresses the frames `src` consists of: one, or several in a row, whose data is
@@ -461,6 +477,12 @@ impl Decompressor {
     /// that return or fill a vector.
     pub fn set_limit(&mut self, limit: usize) {
         self.limit = limit.min(usize::MAX - 64);
+    }
+
+    /// The bytes of memory this decompressor holds now: itself, its tables and its buffer
+    /// of a block's literals. (Not counted: a dictionary, which may be shared.)
+    pub fn memory_size(&self) -> usize {
+        size_of::<Self>() + self.bd.heap_size()
     }
 
     /// Decompresses the frames `src` consists of into `dst`; returns the size of the data.

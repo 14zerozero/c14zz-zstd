@@ -118,6 +118,10 @@ pub(crate) struct BlockEncoder {
 }
 
 impl BlockEncoder {
+    pub fn heap_size(&self) -> usize {
+        2 * size_of::<huf::CTable>() + 6 * size_of::<fse::CTable>() + self.codes.capacity() * 4 + self.out.capacity()
+    }
+
     pub fn new() -> Self {
         let t = || Box::new(fse::CTable::new());
         BlockEncoder {

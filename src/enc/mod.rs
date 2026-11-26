@@ -126,6 +126,11 @@ fn aligned<T>(v: &mut [T], n: usize) -> &mut [T] {
 }
 
 impl Tables {
+    /// The bytes of the tables.
+    fn heap_size(&self) -> usize {
+        4 * (self.hash.capacity() + self.chain.capacity() + self.hash3.capacity()) + self.tags.capacity()
+    }
+
     fn new() -> Self {
         Tables { hash: Vec::new(), chain: Vec::new(), tags: Vec::new(), hash3: Vec::new(), next_to_update: 1, next_idx: 1, kept: (0, None), dirty_beyond: false, was_kept: false, tree_window_log: 0 }
     }
@@ -242,6 +247,12 @@ fn frame_header(out: &mut [u8; 18], p: &Params, size: Option<u64>, checksum: boo
 }
 
 impl Encoder {
+    /// The bytes on the heap that this keeps. (Tables that are kept with a dictionary are
+    /// the dictionary's.)
+    pub fn heap_size(&self) -> usize {
+        self.tables.heap_size() + self.store.heap_size() + self.blocks.heap_size() + self.opt.heap_size() + self.parts.heap_size() + self.joined.capacity()
+    }
+
     pub fn new() -> Self {
         Encoder { tables: Tables::new(), store: SeqStore::new(), blocks: BlockEncoder::new(), opt: opt::State::new(), parts: postsplit::Parts::new(), rep: [1, 4, 8], savings: 0, header: 0, joined: Vec::new(), joined_dict: 0, kept: None }
     }

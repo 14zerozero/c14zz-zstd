@@ -113,6 +113,13 @@ impl<W: Write> Encoder<W> {
         self.pledged = Some(size);
     }
 
+    /// The bytes of memory this encoder holds now: itself, its tables and its buffers, the
+    /// data kept for matches among them. (Not counted: the writer's own, and a dictionary,
+    /// which may be shared.)
+    pub fn memory_size(&self) -> usize {
+        size_of::<Self>() + self.enc.heap_size() + self.buf.capacity() + self.out.capacity()
+    }
+
     /// The writer.
     pub fn get_ref(&self) -> &W {
         &self.w
@@ -309,6 +316,13 @@ impl<R: Read> Decoder<R> {
     /// keeps).
     pub fn set_window_limit(&mut self, bytes: u64) {
         self.window_limit = bytes;
+    }
+
+    /// The bytes of memory this decoder holds now: itself, its tables and its buffers, the
+    /// frame's window among them. (Not counted: the reader's own, and a dictionary, which
+    /// may be shared.)
+    pub fn memory_size(&self) -> usize {
+        size_of::<Self>() + self.bd.heap_size() + self.input.capacity() + self.win.capacity()
     }
 
     /// The reader.

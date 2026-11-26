@@ -52,3 +52,39 @@ fn one_call_while_a_thread_ends() {
     .join()
     .unwrap();
 }
+
+/// What the contexts say they hold: little when new, more with what a frame needs, and no
+/// more for a second frame of the same kind.
+#[test]
+fn memory_sizes() {
+    let data = common::text(100_000, 5);
+    let mut compressor = c14zz_zstd::Compressor::new(3);
+    let new = compressor.memory_size();
+    assert!(new < 64 << 10, "{new}");
+    let frame = compressor.compress(&data);
+    let used = compressor.memory_size();
+    // (the tables of level 3 for 100 KB: 2^16 and 2^15 entries of 4 bytes, at least)
+    assert!(used >= new + (3 << 17) && used < 4 << 20, "{used}");
+    compressor.compress(&data);
+    assert_eq!(compressor.memory_size(), used);
+
+    let mut decompressor = c14zz_zstd::Decompressor::new();
+    let new = decompressor.memory_size();
+    assert!(new < 64 << 10, "{new}");
+    decompressor.decompress(&frame, data.len()).unwrap();
+    let used = decompressor.memory_size();
+    assert!(used >= new && used < 512 << 10, "{used}");
+
+    use std::io::{Read, Write};
+    let mut encoder = c14zz_zstd::stream::Encoder::new(Vec::new(), 3);
+    let new = encoder.memory_size();
+    encoder.write_all(&data).unwrap();
+    assert!(encoder.memory_size() >= new + data.len());
+    let frame = encoder.finish().unwrap();
+    let mut decoder = c14zz_zstd::stream::Decoder::new(&frame[..]);
+    let new = decoder.memory_size();
+    let mut back = Vec::new();
+    decoder.read_to_end(&mut back).unwrap();
+    assert!(back == data);
+    assert!(decoder.memory_size() >= new + data.len());
+}

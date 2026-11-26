@@ -28,6 +28,10 @@ pub(crate) struct SeqStore {
 }
 
 impl SeqStore {
+    pub fn heap_size(&self) -> usize {
+        self.lits.capacity() + self.seqs.capacity() * size_of::<Seq>()
+    }
+
     pub fn new() -> Self {
         SeqStore { lits: Vec::new(), nlit: 0, seqs: Vec::new(), nseq: 0 }
     }
